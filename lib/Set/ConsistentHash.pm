@@ -1,6 +1,7 @@
 package Set::ConsistentHash;
 use strict;
 use Digest::SHA1 qw(sha1);
+use Carp qw(croak);
 use vars qw($VERSION);
 $VERSION = '1.00';
 
@@ -29,6 +30,17 @@ Description, shamelessly stolen from Wikipedia:
 
 You're encouraged to read the original paper, linked below.
 
+=head1 TERMINOLOGY
+
+Terminology about this stuff seems to vary.  For clarity, this module
+uses the following:
+
+B<Consistent Hash> -- The object you work with.  Contains 0 or more
+"targets", each with a weight.
+
+B<Target> -- A member of the set.  The weight (an arbitrary number),
+specifies how often it occurs relative to other targets.
+
 =head1 CLASS METHODS
 
 =head2 new
@@ -36,56 +48,84 @@ You're encouraged to read the original paper, linked below.
   $set = Set::ConsistentHash->new;
 
 Takes no options.  Creates a new consistent hashing set with no
-items.  You'll need to add items.
+targets.  You'll need to add them.
 
 =cut
 
 # creates a new consistent hashing set with no targets.  you'll need to add targets.
 sub new {
-    my ($class) = @_;
-    return bless {
+    my $class = shift;
+    croak("Unknown parameters") if @_;
+    my $self = bless {
         weights => {},  # $target => integer $weight
         points  => {},  # 32-bit value points on 'circle' => \$target
         order   => [],  # 32-bit points, sorted
         buckets      => undef, # when requested, arrayref of 1024 buckets mapping to targets
         total_weight => undef, # when requested, total weight of all targets
     }, $class;
+    return $self;
 }
+
+############################################################################
 
 =head1 INSTANCE METHODS
 
 =cut
 
-# returns sorted list of all configured $targets
+############################################################################
+
+=head2 targets
+
+Returns (alphabetically sorted) array of all targets in set.
+
+=cut
+
 sub targets {
     my $self = shift;
     return sort keys %{$self->{weights}};
 }
 
+############################################################################
 
-# returns sum of all target's weight
-sub total_weight {
-    my $self = shift;
-    return $self->{total_weight} if defined $self->{total_weight};
-    my $sum = 0;
-    foreach my $val (values %{$self->{weights}}) {
-        $sum += $val;
-    }
-    return $self->{total_weight} = $sum;
-}
+=head2 reset_targets
 
-# returns the configured weight percentage [0,100] of a target.
-sub weight_percentage {
-    my ($self, $target) = @_;
-    return 0 unless $self->{weights}{$target};
-    return 100 * $self->{weights}{$target} / $self->total_weight;
-}
+Remove all targets.
 
-# remove all targets
+=cut
+
 sub reset_targets {
     my $self = shift;
     $self->modify_targets(map { $_ => 0 } $self->targets);
 }
+*clear = \&reset_targets;
+
+############################################################################
+
+=head2 set_targets
+
+    $set->set_targets(%target_to_weight);
+    $set->set_targets("foo" => 5, "bar" => 10);
+
+Removes all targets, then sets the provided ones with the weightings provided.
+
+=cut
+
+sub set_targets {
+    my $self = shift;
+    $self->reset_targets;
+    $self->modify_targets(@_);
+}
+
+############################################################################
+
+=head2 modify_targets
+
+    $set->modify_targets(%target_to_weight);
+
+Without removing existing targets, modifies the weighting of provided
+targets.  A weight of undef or 0 removes an item from the set.
+
+=cut
 
 # add/modify targets.  parameters are %weights:  $target -> $weight
 sub modify_targets {
@@ -104,23 +144,71 @@ sub modify_targets {
     }
     $self->_redo_circle;
 }
-*modify_target = \&modify_targets;
 
-sub _redo_circle {
+############################################################################
+
+=head2 set_target
+
+    $set->set_target($target => $weight);
+
+A wrapper around modify_targets that sounds better for modifying a single item.
+
+=cut
+
+*set_target = \&modify_targets;
+
+############################################################################
+
+=head2 total_weight
+
+Returns sum of all current targets' weights.
+
+=cut
+
+#'
+sub total_weight {
     my $self = shift;
-
-    my $pts = $self->{points} = {};
-    while (my ($target, $weight) = each %{$self->{weights}}) {
-        my $num_pts = $weight * 100;
-        foreach my $ptn (1..$num_pts) {
-            my $key = "$target-$ptn";
-            my $val = unpack("L", substr(sha1($key), 0, 4));
-            $pts->{$val} = \$target;
-        }
+    return $self->{total_weight} if defined $self->{total_weight};
+    my $sum = 0;
+    foreach my $val (values %{$self->{weights}}) {
+        $sum += $val;
     }
-
-    $self->{order} = [ sort { $a <=> $b } keys %$pts ];
+    return $self->{total_weight} = $sum;
 }
+
+############################################################################
+
+=head2 percent_weight
+
+   $weight = $set->percent_weight($target);
+   $weight = $set->percent_weight("10.0.0.2");
+
+Returns number in range [0,100] representing percentage of weight that provided $target has.
+
+=cut
+
+sub percent_weight {
+    my ($self, $target) = @_;
+    return 0 unless $self->{weights}{$target};
+    return 100 * $self->{weights}{$target} / $self->total_weight;
+}
+
+############################################################################
+
+=head2 buckets
+
+    $selected_target = $set->buckets->[your_hash_func($your_key) % 1024];
+
+Returns an arrayref of 1024 selected items from the set, in a consistent order.
+
+This is what you want to use to actually select items quickly in your
+application.
+
+If you find the target (say, a server) to be dead, or otherwise
+unavailable, remove it from the set, and look at that index in the
+bucket arrayref again.
+
+=cut
 
 # returns arrayref of 1024 buckets.  each array element is the $target for that bucket index.
 sub buckets {
@@ -136,21 +224,23 @@ sub buckets {
     return $buckets;
 }
 
-# returns hashref of $target -> $number of occurences in 1024 buckets
-sub bucket_counts {
-    my $self = shift;
-    my $ct = {};
-    foreach my $t (@{ $self->buckets }) {
-        $ct->{$t}++;
-    }
-    return $ct;
-}
+############################################################################
 
-# given an integer, returns $target (after modding on 1024 buckets)
-sub target_of_bucket {
-    my ($self, $bucketpos) = @_;
-    return ($self->{buckets} || $self->buckets)->[$bucketpos % 1024];
-}
+=head1 INTERNALS
+
+=head2 target_of_point
+
+   $target = $set->target_of_point($point)
+
+Given a $point, an integer in the range [0,2**32), returns (somewhat
+slowly), the next target found, clockwise from that point on the circle.
+
+This is mostly an internal method, used to generated the 1024-element
+cached bucket arrayref when needed.  You probably don't want to use this.
+Instead, use the B<buckets> method, and run your hash function on your key,
+generating an integer, modulous 1024, and looking up that bucket index's target.
+
+=cut
 
 # given a $point [0,2**32), returns the $target that's next going around the circle
 sub target_of_point {
@@ -188,6 +278,27 @@ sub target_of_point {
         next;
     }
 };
+
+############################################################################
+#  Internal...
+############################################################################
+
+sub _redo_circle {
+    my $self = shift;
+
+    my $pts = $self->{points} = {};
+    while (my ($target, $weight) = each %{$self->{weights}}) {
+        my $num_pts = $weight * 100;
+        foreach my $ptn (1..$num_pts) {
+            my $key = "$target-$ptn";
+            my $val = unpack("L", substr(sha1($key), 0, 4));
+            $pts->{$val} = \$target;
+        }
+    }
+
+    $self->{order} = [ sort { $a <=> $b } keys %$pts ];
+}
+
 
 =head1 REFERENCES
 

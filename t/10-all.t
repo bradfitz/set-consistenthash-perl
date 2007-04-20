@@ -4,7 +4,6 @@ use Test::More tests => 1;
 
 use Set::ConsistentHash;
 use Digest::SHA1 qw(sha1);
-use String::CRC32 qw(crc32);;
 use Data::Dumper;
 
 my $set = Set::ConsistentHash->new;
@@ -21,8 +20,11 @@ $set2->modify_targets(
                       C => 1,
                       );
 
-print Dumper($set->bucket_counts);
-print Dumper($set2->bucket_counts);
+
+
+
+print Dumper($set->t_bucket_counts);
+print Dumper($set2->t_bucket_counts);
 
 
 if (0) {
@@ -48,12 +50,12 @@ if (1) {
     my $total_trials = 100_000;
     my %tran;
     for my $n (1..$total_trials) {
-        my $rand = crc32("trial$n");
+        my $rand = unpack("N", sha1("trial$n"));
         #my $s1 = $set->target_of_point($rand);
         #my $s2 = $set2->target_of_point($rand);
 
-        my $s1 = $set->target_of_bucket($rand);
-        my $s2 = $set2->target_of_bucket($rand);
+        my $s1 = $set->t_target_of_bucket($rand);
+        my $s2 = $set2->t_target_of_bucket($rand);
         $tran{"$s1-$s2"}++;
         $tran{"$s1-"}++;
         $tran{"-$s2"}++;
@@ -63,3 +65,23 @@ if (1) {
 }
 
 pass("dummy test");
+
+
+package Set::ConsistentHash;
+# mix-ins....
+
+# returns hashref of $target -> $number of occurences in 1024 buckets
+sub t_bucket_counts {
+    my $self = shift;
+    my $ct = {};
+    foreach my $t (@{ $self->buckets }) {
+        $ct->{$t}++;
+    }
+    return $ct;
+}
+
+# given an integer, returns $target (after modding on 1024 buckets)
+sub t_target_of_bucket {
+    my ($self, $bucketpos) = @_;
+    return ($self->{buckets} || $self->buckets)->[$bucketpos % 1024];
+}
