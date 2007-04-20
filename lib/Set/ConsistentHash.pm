@@ -3,7 +3,7 @@ use strict;
 use Digest::SHA1 qw(sha1);
 use Carp qw(croak);
 use vars qw($VERSION);
-$VERSION = '1.00';
+$VERSION = '0.90';
 
 =head1 NAME
 
