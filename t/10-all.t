@@ -21,17 +21,15 @@ $set2->modify_targets(
                       );
 
 
-
-
 print Dumper($set->t_bucket_counts);
 print Dumper($set2->t_bucket_counts);
 
 
-if (0) {
+if (1) {
     my %matched;
     my $total_trials = 100_000;
     for my $n (1..$total_trials) {
-        my $rand = crc32("trial$n");
+        my $rand = unpack("N", sha1("trial$n"));
         my $server = $set->target_of_point($rand);
         #print "matched $rand = $server\n";
         $matched{$server}++;
@@ -39,7 +37,7 @@ if (0) {
 
     foreach my $s ($set->targets) {
         printf("$s: expected=%0.02f%%  actual=%0.02f%%\n", #  space=%0.02f%%\n",
-               $set->weight_percentage($s),
+               $set->percent_weight($s),
                100 * $matched{$s} / $total_trials,
                #($space{$s} / 2**32) * 100,
                );
