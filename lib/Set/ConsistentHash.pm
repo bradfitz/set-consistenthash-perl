@@ -3,7 +3,7 @@ use strict;
 use Digest::SHA1 qw(sha1);
 use Carp qw(croak);
 use vars qw($VERSION);
-$VERSION = '0.90';
+$VERSION = '0.91';
 
 =head1 NAME
 
@@ -62,6 +62,7 @@ sub new {
         order   => [],  # 32-bit points, sorted
         buckets      => undef, # when requested, arrayref of 1024 buckets mapping to targets
         total_weight => undef, # when requested, total weight of all targets
+        hash_func    => undef, # hash function for key lookup
     }, $class;
     return $self;
 }
@@ -195,6 +196,45 @@ sub percent_weight {
 
 ############################################################################
 
+=head2 set_hash_func
+
+    $set->set_hash_func(\&your_hash_func);
+
+Sets the function with which keys will be hashed before looking up
+which target they will be mapped onto.
+
+=cut
+
+sub set_hash_func {
+    my ($self, $hash_func) = @_;
+    $self->{hash_func} = $hash_func;
+}
+
+############################################################################
+
+=head2 get_target
+
+    $selected_target = $set->get_target(your_hash_func($your_key));
+
+    - or -
+
+    $set->set_hash_func(\&your_hash_func);
+    $selected_target = $set->get_target($your_key);
+
+Given a key, select the target in the set to which that key is mapped.
+
+If you find the target (say, a server) to be dead or otherwise
+unavailable, remove it from the set, and get the target again.
+
+=cut
+
+sub get_target {
+    my ($self, $key) = @_;
+    _compute_buckets($self) unless $self->{buckets};
+    $key = $self->{hash_func}->($key) if $self->{hash_func};
+    return $self->{buckets}->[$key % 1024];
+}
+
 =head2 buckets
 
     $selected_target = $set->buckets->[your_hash_func($your_key) % 1024];
@@ -213,20 +253,34 @@ bucket arrayref again.
 # returns arrayref of 1024 buckets.  each array element is the $target for that bucket index.
 sub buckets {
     my $self = shift;
-    return $self->{buckets} if $self->{buckets};
-    my $buckets = $self->{buckets} = [];
-    my $by = 2**22;  # 2**32 / 2**10 (1024)
-    for my $n (0..1023) {
-        my $pt = $n * $by;
-        $buckets->[$n] = $self->target_of_point($pt);
-    }
-
-    return $buckets;
+    _compute_buckets($self) unless $self->{buckets};
+    return $self->{buckets};
 }
 
 ############################################################################
 
 =head1 INTERNALS
+
+=head2 _compute_buckets
+
+Computes and returns an array of 1024 selected items from the set,
+in a consistent order.
+
+=cut
+
+# Computes and returns array of 1024 buckets.  Each array element is the
+# $target for that bucket index.
+sub _compute_buckets {
+    my $self = shift;
+    my @buckets = ();
+    my $by = 2**22;  # 2**32 / 2**10 (1024)
+    my $pt = 0;
+    for my $n (0..1023) {
+        $buckets[$n] = $self->target_of_point($pt);
+        $pt += $by;
+    }
+    return $self->{buckets} = \@buckets;
+}
 
 =head2 target_of_point
 
