@@ -140,7 +140,7 @@ sub modify_targets {
         if ($weight) {
             $self->{weights}{$target} = $weight;
         } else {
-            delete $self->{weight}{$target};
+            delete $self->{weights}{$target};
         }
     }
     $self->_redo_circle;
