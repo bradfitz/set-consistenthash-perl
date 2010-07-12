@@ -3,7 +3,7 @@ use strict;
 use Digest::SHA1 qw(sha1);
 use Carp qw(croak);
 use vars qw($VERSION);
-$VERSION = '0.91';
+$VERSION = '0.92';
 
 =head1 NAME
 
@@ -363,6 +363,11 @@ L<http://www8.org/w8-papers/2a-webserver/caching/paper2.html>
 =head1 AUTHOR
 
 Brad Fitzpatrick -- brad@danga.com
+
+=head1 CONTRIBUTING
+
+Bug, performance, doc, feature patch?  See
+L<http://contributing.appspot.com/set-consistenthash-perl>
 
 =head1 COPYRIGHT & LICENSE
 
